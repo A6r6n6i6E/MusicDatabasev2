@@ -1,0 +1,21 @@
+{
+  "name": "music-database-cloudflare-d1",
+  "version": "7.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "cf:dev": "npm run build && npx wrangler pages dev dist --d1 DB=music_database",
+    "cf:deploy": "npm run build && npx wrangler pages deploy dist --project-name music-database"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "lucide-react": "latest"
+  },
+  "devDependencies": {}
+}
