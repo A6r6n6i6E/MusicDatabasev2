@@ -1,9 +1,0 @@
-name = "bazaplyt"
-pages_build_output_dir = "dist"
-compatibility_date = "2026-06-01"
-
-[[d1_databases]]
-binding = "DB"
-database_name = "music_database"
-database_id = "cefbf8a5-39ba-4d76-abe6-a43006de73f3"
-preview_database_id = "cefbf8a5-39ba-4d76-abe6-a43006de73f3"
