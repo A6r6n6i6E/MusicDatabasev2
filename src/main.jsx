@@ -300,7 +300,7 @@ function SuggestInput({ label, value, onChange, placeholder, kind, artist, onPic
       setLoading(false);
       return;
     }
-    if (q.length < 3) {
+    if (q.length < 4) {
       setSuggestions([]);
       setOpen(false);
       return;
