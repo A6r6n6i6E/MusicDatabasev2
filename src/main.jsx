@@ -38,7 +38,23 @@ function loadLocalAlbums() {
 }
 
 function saveLocalAlbums(albums) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(albums));
+  try {
+    const lightweight = albums.map((album) => {
+      const next = { ...album };
+
+      if (typeof next.coverUrl === 'string' && next.coverUrl.startsWith('data:image/')) {
+        next.coverUrl = '';
+        next.localCoverRemoved = true;
+      }
+
+      return next;
+    });
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
+  } catch (err) {
+    console.warn('Nie udało się zapisać lokalnego cache. Czyszczę localStorage.', err);
+    localStorage.removeItem(STORAGE_KEY);
+  }
 }
 
 async function apiJson(url, options = {}) {
