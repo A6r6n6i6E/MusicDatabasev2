@@ -39,20 +39,24 @@ function loadLocalAlbums() {
 
 function saveLocalAlbums(albums) {
   try {
-    const lightweight = albums.map((album) => {
-      const next = { ...album };
+    const lightweightAlbums = albums.map((album) => {
+      const copy = { ...album };
 
-      if (typeof next.coverUrl === 'string' && next.coverUrl.startsWith('data:image/')) {
-        next.coverUrl = '';
-        next.localCoverRemoved = true;
+      if (typeof copy.coverUrl === 'string' && copy.coverUrl.startsWith('data:image/')) {
+        copy.coverUrl = '';
+        copy.localCoverSkipped = true;
       }
 
-      return next;
+      if (typeof copy.rawCoverUrl === 'string' && copy.rawCoverUrl.startsWith('data:image/')) {
+        copy.rawCoverUrl = '';
+      }
+
+      return copy;
     });
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweightAlbums));
   } catch (err) {
-    console.warn('Nie udało się zapisać lokalnego cache. Czyszczę localStorage.', err);
+    console.warn('Nie udało się zapisać lokalnego cache:', err);
     localStorage.removeItem(STORAGE_KEY);
   }
 }
@@ -445,10 +449,15 @@ function App() {
   const [format, setFormat] = useState('all');
   const [cloud, setCloud] = useState({ loading: true, enabled: false, message: 'Łączenie z bazą online…' });
 
-  function setAndCache(next) {
-    setAlbums(next);
+function setAndCache(next) {
+  setAlbums(next);
+
+  try {
     saveLocalAlbums(next);
+  } catch (err) {
+    console.warn('Pomijam lokalny cache:', err);
   }
+}
 
   useEffect(() => {
     let mounted = true;
@@ -473,7 +482,12 @@ async function addAlbum(album) {
     return;
   }
 
-  if (cloud.enabled) await createCloudAlbum(album);
+  if (!cloud.enabled) {
+    alert('Brak połączenia z bazą Cloudflare D1. Album nie został zapisany online.');
+    return;
+  }
+
+  await createCloudAlbum(album);
   setAndCache([album, ...albums]);
 }
 
