@@ -34,31 +34,12 @@ function isDuplicateAlbum(newAlbum, albums) {
 }
 
 function loadLocalAlbums() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }
+  return [];
 }
 
-function saveLocalAlbums(albums) {
-  try {
-    const lightweightAlbums = albums.map((album) => {
-      const copy = { ...album };
-
-      if (typeof copy.coverUrl === 'string' && copy.coverUrl.startsWith('data:image/')) {
-        copy.coverUrl = '';
-        copy.localCoverSkipped = true;
-      }
-
-      if (typeof copy.rawCoverUrl === 'string' && copy.rawCoverUrl.startsWith('data:image/')) {
-        copy.rawCoverUrl = '';
-      }
-
-      return copy;
-    });
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweightAlbums));
-  } catch (err) {
-    console.warn('Nie udało się zapisać lokalnego cache:', err);
-    localStorage.removeItem(STORAGE_KEY);
-  }
+function saveLocalAlbums() {
+  // Lokalny cache wyłączony.
+  // Albumy są przechowywane w Cloudflare D1.
 }
 
 async function apiJson(url, options = {}) {
@@ -444,7 +425,7 @@ function AddAlbumForm({ onAdd }) {
 }
 
 function App() {
-  const [albums, setAlbums] = useState(loadLocalAlbums);
+  const [albums, setAlbums] = useState([]);
   const [query, setQuery] = useState('');
   const [format, setFormat] = useState('all');
   const [cloud, setCloud] = useState({ loading: true, enabled: false, message: 'Łączenie z bazą online…' });
