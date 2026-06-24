@@ -38,7 +38,7 @@ export async function onRequestGet({ request, env }) {
     const q = (url.searchParams.get('q') || '').trim();
     const kind = (url.searchParams.get('kind') || 'release').trim();
     const artist = (url.searchParams.get('artist') || '').trim();
-    if (q.length < 3) return json({ ok: true, suggestions: [] }, 200, { 'cache-control': 'public, max-age=300' });
+    if (q.length < 5) return json({ ok: true, suggestions: [] }, 200, { 'cache-control': 'public, max-age=600' });
     if (!env.DISCOGS_TOKEN) return json({ ok: true, suggestions: [], warning: 'MISSING_DISCOGS_TOKEN' }, 200, { 'cache-control': 'public, max-age=300' });
 
     let search;
