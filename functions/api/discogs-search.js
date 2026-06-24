@@ -114,6 +114,7 @@ export async function onRequestGet({ request, env }) {
     const title = (url.searchParams.get('title') || '').trim();
     const year = (url.searchParams.get('year') || '').trim();
     const format = (url.searchParams.get('format') || '').trim();
+    const discogsId = (url.searchParams.get('discogsId') || '').trim();
 
     if (!artist || !title) {
       return json({ ok: false, message: 'Podaj wykonawce i tytul albumu.' }, 400);
@@ -126,6 +127,17 @@ export async function onRequestGet({ request, env }) {
         message: 'Brakuje zmiennej DISCOGS_TOKEN. Dodaj token Discogs w Cloudflare Pages Environment Variables.'
       }, 401);
     }
+
+    if (discogsId) {
+  const release = await discogsFetch(env, `/releases/${discogsId}`);
+  const album = normalizeRelease(release, { id: discogsId, _score: 999 });
+
+  return json({
+    ok: true,
+    album,
+    alternatives: []
+  }, 200, { 'cache-control': 'public, max-age=86400' });
+}
 
     const searchParams = {
       type: 'release',
