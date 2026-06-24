@@ -10,13 +10,14 @@ export function json(body, status = 200, headers = {}) {
 }
 
 export function getDiscogsHeaders(env) {
-  const token = env.DISCOGS_TOKEN;
-  const userAgent = env.DISCOGS_USER_AGENT || 'BibliotekaPlyt/7.0 +https://pages.dev';
   const headers = {
-    'User-Agent': userAgent,
-    Accept: 'application/json'
+    'User-Agent': env.DISCOGS_USER_AGENT || 'BibliotekaPlyt/7.0'
   };
-  if (token) headers.Authorization = `Discogs token=${token}`;
+
+  if (env.DISCOGS_TOKEN) {
+    headers.Authorization = `Discogs token=${env.DISCOGS_TOKEN}`;
+  }
+
   return headers;
 }
 
