@@ -377,7 +377,7 @@ setOpen(Boolean(nextSuggestions.length));
 }
 
 function AddAlbumForm({ onAdd }) {
-  const [form, setForm] = useState({ artist: '', title: '', year: '', mediaFormat: 'CD' });
+  const [form, setForm] = useState({ artist: '', title: '', year: '', mediaFormat: 'CD', discogsId: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [lastDebug, setLastDebug] = useState(null);
@@ -388,14 +388,15 @@ function AddAlbumForm({ onAdd }) {
     update('artist', s.artist || s.label || '');
   }
 
-  function pickRelease(s) {
-    setForm((prev) => ({
-      ...prev,
-      artist: s.artist || prev.artist,
-      title: s.title || prev.title,
-      year: s.year || prev.year
-    }));
-  }
+function pickRelease(s) {
+  setForm((prev) => ({
+    ...prev,
+    artist: s.artist || prev.artist,
+    title: s.title || prev.title,
+    year: s.year || prev.year,
+    discogsId: s.id || ''
+  }));
+}
 
   async function submit(e) {
     e.preventDefault();
@@ -403,7 +404,16 @@ function AddAlbumForm({ onAdd }) {
     setError('');
     setLastDebug(null);
     try {
-      const params = new URLSearchParams({ artist: form.artist, title: form.title, year: form.year, format: form.mediaFormat });
+      const params = new URLSearchParams({
+  artist: form.artist,
+  title: form.title,
+  year: form.year,
+  format: form.mediaFormat
+});
+
+if (form.discogsId) {
+  params.set('discogsId', form.discogsId);
+}
       const data = await apiJson(`/api/discogs-search?${params.toString()}`);
       const album = {
         ...data.album,
@@ -412,7 +422,7 @@ function AddAlbumForm({ onAdd }) {
         createdAt: new Date().toISOString()
       };
       await onAdd(album);
-      setForm({ artist: '', title: '', year: '', mediaFormat: 'CD' });
+      setForm({ artist: '', title: '', year: '', mediaFormat: 'CD', discogsId: '' });
     } catch (err) {
       setLastDebug(err);
       setError(err.message);
@@ -425,7 +435,16 @@ function AddAlbumForm({ onAdd }) {
     <form className="panel form" onSubmit={submit}>
       <div className="panel-title"><Plus size={20} /> Dodaj płytę z Discogs</div>
       <SuggestInput label="Wykonawca" kind="artist" value={form.artist} onChange={(v) => update('artist', v)} onPick={pickArtist} placeholder="np. Metallica" required />
-      <SuggestInput label="Tytuł albumu" kind="release" artist={form.artist} value={form.title} onChange={(v) => update('title', v)} onPick={pickRelease} placeholder="np. Metallica" required />
+     <SuggestInput
+  label="Tytuł albumu"
+  kind="release"
+  artist={form.artist}
+  value={form.title}
+  onChange={(v) => setForm((prev) => ({ ...prev, title: v, discogsId: '' }))}
+  onPick={pickRelease}
+  placeholder="np. Metallica"
+  required
+/>
       <div className="two-cols">
         <label>Rok<input value={form.year} onChange={(e) => update('year', e.target.value)} placeholder="1991" /></label>
         <label>Format<select value={form.mediaFormat} onChange={(e) => update('mediaFormat', e.target.value)}><option>CD</option><option>LP</option><option>Vinyl</option><option>Cassette</option><option>Box Set</option><option>Digital</option></select></label>
