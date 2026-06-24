@@ -4,6 +4,7 @@ import { Search, Plus, Disc3, Upload, Download, ChevronDown, AlertTriangle, Load
 import './styles.css';
 
 const STORAGE_KEY = 'biblioteka-plyt-discogs-v6-cache';
+const suggestCache = new Map();
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -310,16 +311,28 @@ function SuggestInput({ label, value, onChange, placeholder, kind, artist, onPic
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const params = new URLSearchParams({ kind, q, artist: artist || '' });
-        const data = await apiJson(`/api/discogs-suggest?${params.toString()}`, { signal: controller.signal });
-        setSuggestions(data.suggestions || []);
-        setOpen(Boolean(data.suggestions?.length));
+const params = new URLSearchParams({ kind, q, artist: artist || '' });
+const cacheKey = `${kind}:${artist || ''}:${q}`.toLowerCase();
+
+if (suggestCache.has(cacheKey)) {
+  const cached = suggestCache.get(cacheKey);
+  setSuggestions(cached);
+  setOpen(Boolean(cached.length));
+  setLoading(false);
+  return;
+}
+
+const data = await apiJson(`/api/discogs-suggest?${params.toString()}`, { signal: controller.signal });
+const nextSuggestions = data.suggestions || [];
+suggestCache.set(cacheKey, nextSuggestions);
+setSuggestions(nextSuggestions);
+setOpen(Boolean(nextSuggestions.length));
       } catch {
         setSuggestions([]);
       } finally {
         setLoading(false);
       }
-    }, 280);
+    }, 1500);
     return () => {
       clearTimeout(timer);
       controller.abort();
