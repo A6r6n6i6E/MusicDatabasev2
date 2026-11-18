@@ -977,7 +977,6 @@ function MusicBrainzAddForm({ onAdd, onSwitchToManual }) {
 
   return (
     <div className="entry-form musicbrainz-entry">
-      <p className="hint"><strong>MusicBrainz</strong> pobiera informacje i utwory, a <strong>Cover Art Archive</strong> dostarcza dostępne okładki. Nie potrzebujesz tokenu Discogs.</p>
       <form className="mb-link-row" onSubmit={submitLink}>
         <label>Link MusicBrainz / UUID konkretnego wydania
           <input value={link} onChange={(e) => changeLink(e.target.value)} onPaste={pasteLink} placeholder="musicbrainz.org/release/xxxxxxxx-…" autoComplete="off" />
