@@ -1,5 +1,21 @@
 import { albumKey, json, readJson, requireDb } from './_common.js';
 
+function validateAlbum(album) {
+  if (!album || typeof album !== 'object' || !album.id || typeof album.artist !== 'string' || typeof album.title !== 'string'
+      || !album.artist.trim() || !album.title.trim()) {
+    const error = new Error('Album musi mieć ID, wykonawcę i tytuł.');
+    error.status = 400;
+    throw error;
+  }
+  const bytes = new TextEncoder().encode(JSON.stringify(album)).byteLength;
+  if (bytes > 1_700_000) {
+    const error = new Error('Dane albumu są zbyt duże dla D1. Wgraj mniejszą okładkę (w edytorze obraz zostanie zmniejszony automatycznie).');
+    error.status = 413;
+    error.code = 'ALBUM_TOO_LARGE';
+    throw error;
+  }
+}
+
 function rowToAlbum(row) {
   const album = JSON.parse(row.album || '{}');
   return {
@@ -19,20 +35,25 @@ export async function onRequest(context) {
     const url = new URL(request.url);
 
     if (method === 'GET') {
+      const meta = await db.prepare('SELECT COUNT(*) AS count, MAX(updated_at) AS latest FROM albums').first();
+      const revision = `${Number(meta?.count || 0)}:${meta?.latest || ''}`;
+      if (url.searchParams.get('meta') === '1') {
+        return json({ ok: true, revision, count: Number(meta?.count || 0) });
+      }
       const result = await db.prepare(
         'SELECT id, album, created_at, updated_at FROM albums ORDER BY datetime(created_at) DESC'
       ).all();
-      return json({ ok: true, mode: 'cloudflare-d1', albums: (result.results || []).map(rowToAlbum) });
+      return json({ ok: true, mode: 'cloudflare-d1', revision, albums: (result.results || []).map(rowToAlbum) });
     }
 
     if (method === 'POST') {
       const body = await readJson(request);
       const album = body.album || body;
-      if (!album || !album.id) return json({ ok: false, message: 'Brakuje obiektu album z polem id.' }, 400);
+      validateAlbum(album);
 
       album.updatedAt = new Date().toISOString();
       album.createdAt = album.createdAt || album.updatedAt;
-      const key = album.albumKey || albumKey(album);
+      const key = albumKey(album);
       album.albumKey = key;
 
       try {
@@ -55,8 +76,9 @@ export async function onRequest(context) {
       if (!id || !album) return json({ ok: false, message: 'Brakuje id lub album.' }, 400);
 
       album.id = id;
+      validateAlbum(album);
       album.updatedAt = new Date().toISOString();
-      const key = album.albumKey || albumKey(album);
+      const key = albumKey(album);
       album.albumKey = key;
 
       try {

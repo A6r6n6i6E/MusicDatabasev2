@@ -1,6 +1,6 @@
 {
   "name": "music-database-cloudflare-d1",
-  "version": "7.0.0",
+  "version": "9.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "cf:dev": "npm run build && npx wrangler pages dev dist --d1 DB=music_database",
-    "cf:deploy": "npm run build && npx wrangler pages deploy dist --project-name music-database"
+    "cf:deploy": "npm run build && npx wrangler pages deploy dist",
+    "test": "node tests/smoke.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

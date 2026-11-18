@@ -10,14 +10,13 @@ export function json(body, status = 200, headers = {}) {
 }
 
 export function getDiscogsHeaders(env) {
+  const token = env.DISCOGS_TOKEN;
+  const userAgent = env.DISCOGS_USER_AGENT || 'BibliotekaPlyt/8.0 (Cloudflare Pages)';
   const headers = {
-    'User-Agent': env.DISCOGS_USER_AGENT || 'BibliotekaPlyt/7.0'
+    'User-Agent': userAgent,
+    Accept: 'application/json'
   };
-
-  if (env.DISCOGS_TOKEN) {
-    headers.Authorization = `Discogs token=${env.DISCOGS_TOKEN}`;
-  }
-
+  if (token) headers.Authorization = `Discogs token=${token}`;
   return headers;
 }
 
@@ -26,7 +25,7 @@ export function normalizeText(value = '') {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }
 

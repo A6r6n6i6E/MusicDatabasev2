@@ -1,13 +1,12 @@
-import { getDiscogsHeaders, json } from './_common.js';
-
-const DISCOGS_BASE = 'https://api.discogs.com';
+import { json } from './_common.js';
+import { discogsFetch, discogsErrorResponse } from './_discogs.js';
 
 function norm(value = '') {
   return String(value)
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }
 
@@ -65,11 +64,13 @@ function normalizeRelease(release, fallback, source = 'Discogs') {
   });
   const rawTracks = (release.tracklist || []).filter((t) => t && t.type_ !== 'heading');
   const image = (release.images || [])[0]?.uri || (release.images || [])[0]?.resource_url || fallback.cover_image || fallback.thumb || '';
+  const releaseUri = release.uri || fallback.uri || '';
+  const discogsUrl = releaseUri ? new URL(releaseUri, 'https://www.discogs.com').toString() : '';
 
   return {
     source,
     discogsId: release.id || fallback.id,
-    discogsUrl: release.uri ? `https://www.discogs.com${release.uri}` : fallback.uri || '',
+    discogsUrl,
     artist: artists.join(', ') || fallback.artist || '',
     title: release.title || fallback.release_title || fallback.title || '',
     year: release.year || fallback.year || '',
@@ -86,27 +87,6 @@ function normalizeRelease(release, fallback, source = 'Discogs') {
   };
 }
 
-async function discogsFetch(env, path, params = {}) {
-  const url = new URL(`${DISCOGS_BASE}${path}`);
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && String(value).trim() !== '') {
-      url.searchParams.set(key, value);
-    }
-  });
-
-  const res = await fetch(url, { headers: getDiscogsHeaders(env) });
-  const text = await res.text();
-  let data;
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { message: text }; }
-  if (!res.ok) {
-    const err = new Error(data.message || `Discogs HTTP ${res.status}`);
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
-  return data;
-}
-
 export async function onRequestGet({ request, env }) {
   try {
     const url = new URL(request.url);
@@ -115,10 +95,6 @@ export async function onRequestGet({ request, env }) {
     const year = (url.searchParams.get('year') || '').trim();
     const format = (url.searchParams.get('format') || '').trim();
     const discogsId = (url.searchParams.get('discogsId') || '').trim();
-
-    if (!artist || !title) {
-      return json({ ok: false, message: 'Podaj wykonawce i tytul albumu.' }, 400);
-    }
 
     if (!env.DISCOGS_TOKEN) {
       return json({
@@ -129,15 +105,17 @@ export async function onRequestGet({ request, env }) {
     }
 
     if (discogsId) {
-  const release = await discogsFetch(env, `/releases/${discogsId}`);
-  const album = normalizeRelease(release, { id: discogsId, _score: 999 });
+      if (!/^\d{1,15}$/.test(discogsId)) {
+        return json({ ok: false, message: 'Niepoprawny identyfikator Discogs Release ID.' }, 400);
+      }
+      // Wybór konkretnego wydania = bez ponownego wyszukiwania po tytule.
+      const release = await discogsFetch(env, `/releases/${discogsId}`);
+      return json({ ok: true, album: normalizeRelease(release, { id: discogsId }), alternatives: [] });
+    }
 
-  return json({
-    ok: true,
-    album,
-    alternatives: []
-  }, 200, { 'cache-control': 'public, max-age=86400' });
-}
+    if (!artist || !title) {
+      return json({ ok: false, message: 'Podaj wykonawcę i tytuł albumu lub ID wydania Discogs.' }, 400);
+    }
 
     const searchParams = {
       type: 'release',
@@ -183,6 +161,6 @@ export async function onRequestGet({ request, env }) {
       }))
     }, 200, { 'cache-control': 'public, max-age=600' });
   } catch (error) {
-    return json({ ok: false, message: error.message || 'Nieznany blad pobierania danych z Discogs.', details: error.data || null }, error.status || 500);
+    return discogsErrorResponse(error, json);
   }
 }
