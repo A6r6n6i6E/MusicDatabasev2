@@ -4,6 +4,7 @@ import { Search, Plus, Disc3, Upload, Download, ChevronDown, AlertTriangle, Load
 import './styles.css';
 import { imageFileToDataUrl } from './image-utils.js';
 import { parseDiscogsReleaseId } from './discogs-link.js';
+import { parseMusicBrainzReleaseId } from './musicbrainz-link.js';
 
 // Nie używamy localStorage — źródłem prawdy jest D1.
 const suggestCache = new Map();
@@ -167,6 +168,7 @@ function EditAlbumForm({ album, onCancel, onSave }) {
         mediaFormat: String(draft.mediaFormat || '').trim(),
         coverUrl: String(draft.coverUrl || '').trim(),
         discogsUrl: String(draft.discogsUrl || '').trim(),
+        musicbrainzUrl: String(draft.musicbrainzUrl || '').trim(),
         label: String(draft.label || '').trim(),
         format: String(draft.format || '').trim(),
         genres: csvToArray(draft.genresText),
@@ -207,6 +209,7 @@ function EditAlbumForm({ album, onCancel, onSave }) {
         <label>Gatunki<input value={draft.genresText || ''} onChange={(e) => update('genresText', e.target.value)} placeholder="Heavy Metal, Rock" /></label>
         <label>Style<input value={draft.stylesText || ''} onChange={(e) => update('stylesText', e.target.value)} placeholder="Thrash, Hard Rock" /></label>
       </div>
+      <label>MusicBrainz URL<input value={draft.musicbrainzUrl || ''} onChange={(e) => update('musicbrainzUrl', e.target.value)} /></label>
       <label>Discogs URL<input value={draft.discogsUrl || ''} onChange={(e) => update('discogsUrl', e.target.value)} /></label>
       <label>Tracklista<textarea value={draft.tracksText || ''} onChange={(e) => update('tracksText', e.target.value)} rows={9} placeholder={'1 | Tytuł utworu | 4:32\n2 | Kolejny utwór | 3:58'} /></label>
       {error ? <div className="error"><AlertTriangle size={16} /> {error}</div> : null}
@@ -292,7 +295,7 @@ function AlbumCard({ album, onDelete, onUpdate }) {
   );
 }
 
-function SuggestInput({ label, value, onChange, placeholder, kind, artist, onPick, required }) {
+function SuggestInput({ label, value, onChange, placeholder, kind, artist, onPick, required, provider = 'discogs' }) {
   const [suggestions, setSuggestions] = useState([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -324,7 +327,7 @@ function SuggestInput({ label, value, onChange, placeholder, kind, artist, onPic
       return;
     }
 
-    const cacheKey = `${kind}:${artist || ''}:${q}`.toLocaleLowerCase('pl');
+    const cacheKey = `${provider}:${kind}:${artist || ''}:${q}`.toLocaleLowerCase('pl');
     const cached = suggestCache.get(cacheKey);
     if (cached && cached.expires > Date.now()) {
       setSuggestions(cached.items);
@@ -340,7 +343,8 @@ function SuggestInput({ label, value, onChange, placeholder, kind, artist, onPic
       setHint('');
       try {
         const params = new URLSearchParams({ kind, q, artist: artist || '' });
-        const data = await apiJson(`/api/discogs-suggest?${params}`, { signal: controller.signal });
+        const endpoint = provider === 'musicbrainz' ? 'musicbrainz-suggest' : 'discogs-suggest';
+        const data = await apiJson(`/api/${endpoint}?${params}`, { signal: controller.signal });
         const items = data.suggestions || [];
         if (!controller.signal.aborted) {
           if (suggestCache.size > 120) suggestCache.clear();
@@ -352,9 +356,9 @@ function SuggestInput({ label, value, onChange, placeholder, kind, artist, onPic
         if (controller.signal.aborted) return;
         setSuggestions([]);
         setOpen(false);
-        if (err.status === 429 || err.code === 'DISCOGS_RATE_LIMIT') {
+        if (err.status === 429 || err.status === 503 || err.code === 'DISCOGS_RATE_LIMIT' || err.code === 'MUSICBRAINZ_RATE_LIMIT') {
           cooldownRef.current = Date.now() + Math.max(90, err.retryAfter || 0) * 1000;
-          setHint('Discogs ograniczył podpowiedzi. Możesz dodać płytę ręcznie.');
+          setHint(`${provider === 'musicbrainz' ? 'MusicBrainz' : 'Discogs'} chwilowo ogranicza podpowiedzi. Możesz wpisać nazwę ręcznie.`);
         } else {
           setHint('Podpowiedzi chwilowo niedostępne. Możesz wpisać nazwę ręcznie.');
         }
@@ -799,19 +803,294 @@ function DiscogsAddForm({ onAdd, onSwitchToManual }) {
   );
 }
 
+function MusicBrainzAddForm({ onAdd, onSwitchToManual }) {
+  const [form, setForm] = useState({ artist: '', title: '', year: '', mediaFormat: 'CD', releaseId: '' });
+  const [link, setLink] = useState('');
+  const [candidates, setCandidates] = useState([]);
+  const [draft, setDraft] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [coverBusy, setCoverBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [imageError, setImageError] = useState(false);
+  const serial = useRef(0);
+  const setField = (key, value) => setForm((previous) => ({ ...previous, [key]: value }));
+  const updateDraft = (field, value) => {
+    setDraft((prev) => prev ? { ...prev, [field]: value } : prev);
+    if (field === 'coverUrl') setImageError(false);
+  };
+  const describeError = (err) => err.code === 'MUSICBRAINZ_RATE_LIMIT'
+    ? 'MusicBrainz jest chwilowo przeciążony. Możesz spróbować ponownie za chwilę lub skorzystać z dodawania ręcznego.'
+    : (err.message || 'Nie udało się pobrać danych z MusicBrainz.');
+
+  async function loadRelease(id) {
+    const seq = ++serial.current;
+    setLoading(true);
+    setError('');
+    setSuccess('');
+    setDraft(null);
+    setImageError(false);
+    try {
+      const data = await apiJson(`/api/musicbrainz-release?id=${encodeURIComponent(id)}`);
+      if (seq !== serial.current) return;
+      const album = data.album;
+      setCandidates([]);
+      setDraft({
+        ...album,
+        artist: String(album.artist || ''),
+        title: String(album.title || ''),
+        year: String(album.year || ''),
+        country: String(album.country || ''),
+        mediaFormat: album.mediaFormat || form.mediaFormat || 'CD',
+        coverUrl: String(album.coverUrl || ''),
+        label: String(album.label || ''),
+        genresText: (album.genres || []).join(', '),
+        stylesText: (album.styles || []).join(', '),
+        tracksText: tracksToText(album.tracks || [])
+      });
+    } catch (err) {
+      if (seq === serial.current) setError(describeError(err));
+    } finally {
+      if (seq === serial.current) setLoading(false);
+    }
+  }
+
+  function changeLink(value) {
+    serial.current += 1;
+    setLink(value);
+    setDraft(null);
+    setCandidates([]);
+    setError('');
+    setSuccess('');
+    setLoading(false);
+  }
+
+  function pasteLink(event) {
+    const value = event.clipboardData.getData('text').trim();
+    if (!value) return;
+    event.preventDefault();
+    changeLink(value);
+    try { void loadRelease(parseMusicBrainzReleaseId(value)); }
+    catch (err) { setError(err.message); }
+  }
+
+  function submitLink(event) {
+    event.preventDefault();
+    try { void loadRelease(parseMusicBrainzReleaseId(link)); }
+    catch (err) { setError(err.message); }
+  }
+
+  function changeSearchField(key, value) {
+    serial.current += 1;
+    setForm((prev) => ({ ...prev, [key]: value, releaseId: '' }));
+    setDraft(null);
+    setCandidates([]);
+    setLoading(false);
+    setSearching(false);
+    setError('');
+    setSuccess('');
+  }
+
+  async function searchReleases(event) {
+    event.preventDefault();
+    if (searching) return;
+    if (form.title.trim().length < 2) { setError('Wpisz przynajmniej 2 znaki tytułu.'); return; }
+    const seq = ++serial.current;
+    setSearching(true);
+    setError('');
+    setDraft(null);
+    setSuccess('');
+    setCandidates([]);
+    try {
+      // MusicBrainz provides editions; user chooses instead of us guessing.
+      const params = new URLSearchParams({ kind: 'release', search: '1', q: form.title.trim(), artist: form.artist.trim(), year: form.year.trim(), format: form.mediaFormat });
+      const data = await apiJson(`/api/musicbrainz-suggest?${params}`);
+      if (seq !== serial.current) return;
+      const list = data.suggestions || [];
+      setCandidates(list);
+      if (!list.length) setError('Nie znaleziono pasującego wydania. Spróbuj krótszego tytułu, linku MusicBrainz lub trybu ręcznego.');
+    } catch (err) {
+      if (seq === serial.current) setError(describeError(err));
+    } finally {
+      if (seq === serial.current) setSearching(false);
+    }
+  }
+
+  function pickArtist(item) {
+    setForm((prev) => ({ ...prev, artist: item.artist || item.title || '', releaseId: '' }));
+    setCandidates([]);
+  }
+
+  function pickRelease(item) {
+    setForm((prev) => ({
+      ...prev, artist: item.artist || prev.artist, title: item.title || prev.title,
+      year: item.year || prev.year, mediaFormat: item.mediaFormat || prev.mediaFormat,
+      releaseId: item.mbid || item.id || ''
+    }));
+    if (item.mbid || item.id) void loadRelease(item.mbid || item.id);
+  }
+
+  async function loadCoverFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setCoverBusy(true);
+    setError('');
+    try { updateDraft('coverUrl', await imageFileToDataUrl(file)); }
+    catch (err) { setError(err.message || 'Nie udało się przygotować okładki.'); }
+    finally { setCoverBusy(false); }
+  }
+
+  async function saveAlbum(event) {
+    event.preventDefault();
+    if (!draft || saving || coverBusy) return;
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const now = new Date().toISOString();
+      const album = {
+        ...draft,
+        id: uid(),
+        artist: draft.artist.trim(), title: draft.title.trim(), year: draft.year.trim(),
+        country: draft.country.trim(), mediaFormat: draft.mediaFormat,
+        coverUrl: draft.coverUrl.trim(), label: draft.label.trim(),
+        genres: csvToArray(draft.genresText), styles: csvToArray(draft.stylesText),
+        tracks: textToTracks(draft.tracksText),
+        createdAt: now, updatedAt: now
+      };
+      delete album.tracksText;
+      delete album.genresText;
+      delete album.stylesText;
+      if (!album.artist || !album.title) throw new Error('Podaj tytuł i wykonawcę.');
+      await onAdd(album); // This calls D1 only, never MusicBrainz or Discogs.
+      setDraft(null);
+      setLink('');
+      setCandidates([]);
+      setForm({ artist: '', title: '', year: '', mediaFormat: 'CD', releaseId: '' });
+      setSuccess(`Dodano do D1: ${album.artist} — ${album.title}`);
+    } catch (err) { setError(err.message || 'Nie udało się zapisać albumu w D1.'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="entry-form musicbrainz-entry">
+      <p className="hint"><strong>MusicBrainz</strong> pobiera informacje i utwory, a <strong>Cover Art Archive</strong> dostarcza dostępne okładki. Nie potrzebujesz tokenu Discogs.</p>
+      <form className="mb-link-row" onSubmit={submitLink}>
+        <label>Link MusicBrainz / UUID konkretnego wydania
+          <input value={link} onChange={(e) => changeLink(e.target.value)} onPaste={pasteLink} placeholder="musicbrainz.org/release/xxxxxxxx-…" autoComplete="off" />
+        </label>
+        <button type="submit" className="ghost full" disabled={!link.trim() || loading || saving}>
+          {loading ? <Loader2 size={16} className="spin" /> : <Download size={16} />}
+          {loading ? 'Pobieram…' : 'Pobierz z linku'}
+        </button>
+      </form>
+      <div className="mb-separator"><span>lub wyszukaj konkretne wydanie</span></div>
+      <form className="mb-search-form" onSubmit={searchReleases}>
+        <SuggestInput provider="musicbrainz" label="Wykonawca" kind="artist" value={form.artist}
+          onChange={(value) => changeSearchField('artist', value)} onPick={pickArtist} placeholder="np. Metallica" />
+        <SuggestInput provider="musicbrainz" label="Tytuł albumu" kind="release" artist={form.artist} value={form.title}
+          onChange={(value) => changeSearchField('title', value)} onPick={pickRelease} placeholder="np. Master of Puppets" required />
+        <div className="two-cols">
+          <label>Rok (opcjonalny)<input inputMode="numeric" value={form.year} onChange={(e) => setField('year', e.target.value)} placeholder="1986" /></label>
+          <label>Preferowany format
+            <select value={form.mediaFormat} onChange={(e) => setField('mediaFormat', e.target.value)}>
+              <option>CD</option><option>LP</option><option>Vinyl</option><option>Cassette</option><option>Box Set</option><option>Digital</option>
+            </select>
+          </label>
+        </div>
+        <button className="ghost full" type="submit" disabled={searching || loading || form.title.trim().length < 2}>
+          {searching ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
+          {searching ? 'Szukam wydań…' : 'Pokaż dostępne wydania'}
+        </button>
+      </form>
+      {candidates.length ? (
+        <div className="mb-candidates" aria-label="Wybierz wydanie z MusicBrainz">
+          <strong>Wybierz właściwe wydanie ({candidates.length}):</strong>
+          {candidates.map((item) => (
+            <button key={item.mbid || item.id} type="button" disabled={loading} onClick={() => pickRelease(item)}>
+              <Disc3 size={19} />
+              <span><strong>{item.title}</strong><small>{item.artist} · {item.year || 'bez roku'} · {item.country || 'bez kraju'} · {item.format || 'format nieznany'}</small></span>
+              <ChevronDown size={16} />
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {error ? <div className="error" role="alert"><AlertTriangle size={16} /> {error}</div> : null}
+      {error ? <button type="button" className="ghost" onClick={onSwitchToManual}>Przejdź do trybu ręcznego</button> : null}
+      {success ? <div className="success" role="status">{success}</div> : null}
+      {loading ? <div className="mb-loading"><Loader2 size={19} className="spin" /> Pobieram tracklistę i informacje o wydaniu…</div> : null}
+      {draft ? (
+        <form className="link-review" onSubmit={saveAlbum}>
+          <div className="link-review-heading"><Save size={16} /> Sprawdź album przed zapisaniem</div>
+          <div className="link-review-hero">
+            {draft.coverUrl && !imageError ? (
+              <img className="link-review-cover" src={draft.coverUrl} alt={`Okładka ${draft.title}`} onError={() => setImageError(true)} />
+            ) : <div className="link-review-cover link-review-empty"><Disc3 size={35} /></div>}
+            <div className="link-review-summary">
+              <strong>{draft.artist}</strong><span>{draft.title}</span>
+              <small>{draft.year || 'bez roku'} · {draft.country || 'bez kraju'} · {draft.mediaFormat}</small>
+              <small>{textToTracks(draft.tracksText).length} utworów · MusicBrainz</small>
+              <small>{imageError ? 'Brak okładki w archiwum — możesz wgrać własną.' : ''}</small>
+            </div>
+          </div>
+          <label>Wykonawca<input required value={draft.artist} onChange={(e) => updateDraft('artist', e.target.value)} /></label>
+          <label>Tytuł<input required value={draft.title} onChange={(e) => updateDraft('title', e.target.value)} /></label>
+          <div className="two-cols">
+            <label>Rok wydania<input value={draft.year} onChange={(e) => updateDraft('year', e.target.value)} inputMode="numeric" /></label>
+            <label>Format w kolekcji<select value={draft.mediaFormat} onChange={(e) => updateDraft('mediaFormat', e.target.value)}>
+              <option>CD</option><option>LP</option><option>Vinyl</option><option>Cassette</option><option>Box Set</option><option>Digital</option>
+            </select></label>
+          </div>
+          <label>Kraj wydania<input value={draft.country} onChange={(e) => updateDraft('country', e.target.value)} /></label>
+          <details className="extra-fields">
+            <summary>Lista utworów ({textToTracks(draft.tracksText).length}) — kliknij, aby poprawić</summary>
+            <textarea value={draft.tracksText} onChange={(e) => updateDraft('tracksText', e.target.value)} rows={8} />
+          </details>
+          <details className="extra-fields">
+            <summary>Okładka, wytwórnia i gatunki</summary>
+            <label>Adres okładki<input value={draft.coverUrl} onChange={(e) => updateDraft('coverUrl', e.target.value)} /></label>
+            <label className="ghost upload cover-upload"><ImageIcon size={16} /> {coverBusy ? 'Przygotowuję okładkę…' : 'Wgraj własną okładkę'}
+              <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" disabled={saving || coverBusy} onChange={loadCoverFile} />
+            </label>
+            <label>Wytwórnia<input value={draft.label} onChange={(e) => updateDraft('label', e.target.value)} /></label>
+            <label>Gatunki<input value={draft.genresText} onChange={(e) => updateDraft('genresText', e.target.value)} /></label>
+            <label>Style<input value={draft.stylesText} onChange={(e) => updateDraft('stylesText', e.target.value)} /></label>
+          </details>
+          <button type="submit" className="primary" disabled={saving || coverBusy}>
+            <Save size={17} /> {saving ? 'Zapisuję w Cloudflare D1…' : 'Dodaj ten album do kolekcji'}
+          </button>
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
 function AddAlbumForm({ onAdd }) {
-  const [mode, setMode] = useState('link');
+  const [mode, setMode] = useState('musicbrainz');
+  const [discogsMode, setDiscogsMode] = useState('link');
   return (
     <div className="panel add-panel">
       <div className="panel-title"><Plus size={20} /> Dodaj płytę</div>
-      <div className="mode-switch three-modes" role="group" aria-label="Sposób dodawania albumu">
-        <button type="button" className={mode === 'link' ? 'active' : ''} aria-pressed={mode === 'link'} onClick={() => setMode('link')}>Z linku</button>
-        <button type="button" className={mode === 'discogs' ? 'active' : ''} aria-pressed={mode === 'discogs'} onClick={() => setMode('discogs')}>Wyszukaj</button>
+      <div className="mode-switch three-modes" role="group" aria-label="Źródło danych albumu">
+        <button type="button" className={mode === 'musicbrainz' ? 'active' : ''} aria-pressed={mode === 'musicbrainz'} onClick={() => setMode('musicbrainz')}>MusicBrainz</button>
+        <button type="button" className={mode === 'discogs' ? 'active' : ''} aria-pressed={mode === 'discogs'} onClick={() => setMode('discogs')}>Discogs</button>
         <button type="button" className={mode === 'manual' ? 'active' : ''} aria-pressed={mode === 'manual'} onClick={() => setMode('manual')}>Ręcznie</button>
       </div>
-      {mode === 'link' ? <DiscogsLinkForm onAdd={onAdd} onSwitchToManual={() => setMode('manual')} /> : null}
+      {mode === 'musicbrainz' ? <MusicBrainzAddForm onAdd={onAdd} onSwitchToManual={() => setMode('manual')} /> : null}
+      {mode === 'discogs' ? (
+        <div className="entry-form">
+          <div className="mode-switch" role="group" aria-label="Sposób dodawania z Discogs">
+            <button type="button" className={discogsMode === 'link' ? 'active' : ''} aria-pressed={discogsMode === 'link'} onClick={() => setDiscogsMode('link')}>Z linku</button>
+            <button type="button" className={discogsMode === 'search' ? 'active' : ''} aria-pressed={discogsMode === 'search'} onClick={() => setDiscogsMode('search')}>Wyszukaj</button>
+          </div>
+          {discogsMode === 'link' ? <DiscogsLinkForm onAdd={onAdd} onSwitchToManual={() => setMode('manual')} /> : null}
+          {discogsMode === 'search' ? <DiscogsAddForm onAdd={onAdd} onSwitchToManual={() => setMode('manual')} /> : null}
+        </div>
+      ) : null}
       {mode === 'manual' ? <ManualAddForm onAdd={onAdd} /> : null}
-      {mode === 'discogs' ? <DiscogsAddForm onAdd={onAdd} onSwitchToManual={() => setMode('manual')} /> : null}
     </div>
   );
 }
@@ -990,7 +1269,7 @@ function App() {
           {!filtered.length ? (
             <div className="empty"><Disc3 size={44} />
               <h2>{cloud.loading ? 'Ładuję kolekcję…' : 'Brak albumów'}</h2>
-              <p>{cloud.loading ? 'Pobieram dane z Cloudflare D1.' : 'Dodaj płytę ręcznie albo wyszukaj ją w Discogs.'}</p>
+              <p>{cloud.loading ? 'Pobieram dane z Cloudflare D1.' : 'Dodaj płytę z MusicBrainz, Discogs lub ręcznie.'}</p>
             </div>
           ) : null}
         </section>

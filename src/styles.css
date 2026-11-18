@@ -317,3 +317,19 @@ button:disabled { opacity: .65; cursor: wait; }
   .link-review-hero { grid-template-columns: 72px minmax(0, 1fr); gap: 10px; }
   .link-review-cover { width: 72px; height: 72px; }
 }
+
+/* v10: MusicBrainz + Cover Art Archive */
+.musicbrainz-entry { gap: 13px; }
+.mb-link-row, .mb-search-form { display: grid; gap: 10px; }
+.mb-separator { text-align: center; color: var(--muted); font-size: 11px; font-weight: 700; position: relative; margin: 2px 0; }
+.mb-separator:before { content: ''; width: 100%; position: absolute; top: 50%; left: 0; border-top: 1px solid var(--line); }
+.mb-separator span { padding: 0 10px; position: relative; background: #101625; border-radius: 9px; }
+.mb-loading { display: flex; align-items: center; gap: 8px; color: #ddd6fe; font-size: 13px; }
+.mb-candidates { display: grid; gap: 6px; background: rgba(6,9,18,.82); border: 1px solid var(--line); border-radius: 16px; padding: 10px; }
+.mb-candidates > strong { color: #fda4af; font-size: 12px; margin-bottom: 4px; }
+.mb-candidates button { text-align: left; display: grid; grid-template-columns: 20px minmax(0,1fr) 16px; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,.065); background: rgba(255,255,255,.025); border-radius: 10px; padding: 10px; color: #e5e7eb; width: 100%; }
+.mb-candidates button:hover, .mb-candidates button:focus-visible { background: rgba(168,85,247,.13); border-color: rgba(168,85,247,.4); }
+.mb-candidates button span { min-width: 0; }
+.mb-candidates button strong { display: block; font-size: 13px; overflow-wrap: anywhere; }
+.mb-candidates button small { display: block; margin-top: 3px; font-size: 11px; color: #a9b2c5; line-height: 1.4; }
+.mb-search-form .ghost.full, .mb-link-row .ghost.full { justify-content: center; }
