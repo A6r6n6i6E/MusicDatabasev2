@@ -1,5 +1,5 @@
 import { json } from './_common.js';
-import { creditedArtist, formatName, guessMediaFormat, lucenePrefix, mbCountry, musicBrainzError, musicBrainzFetch } from './_musicbrainz.js';
+import { creditedArtist, formatName, guessMediaFormat, lucenePrefix, luceneReleaseQuery, mbCountry, musicBrainzError, musicBrainzFetch } from './_musicbrainz.js';
 
 export async function onRequestGet({ request, env }) {
   try {
@@ -19,12 +19,22 @@ export async function onRequestGet({ request, env }) {
         country: r.country || '', score: r.score || 0
       })) });
     }
-    const query = artist ? `${lucenePrefix('release', q)} AND ${lucenePrefix('artist', artist)}` : lucenePrefix('release', q);
-    let data = await musicBrainzFetch(env, '/release/', { query, limit: 12 });
-    // Deliberate search can fall back to title only when artist aliases differ.
-    // Autocomplete never makes this second request.
+    // An explicit search must match the WHOLE album title, not every word
+    // independently. The old query included `release:of`, which could produce
+    // no results for a very common album such as Master of Puppets (1986).
+    const titleQuery = explicitSearch ? luceneReleaseQuery(q) : lucenePrefix('release', q);
+    const query = artist
+      ? (explicitSearch ? luceneReleaseQuery(q, artist) : `${titleQuery} AND ${lucenePrefix('artist', artist)}`)
+      : titleQuery;
+    let data = await musicBrainzFetch(env, '/release/', { query, limit: explicitSearch ? 45 : 16 });
+
+    // The artist credit may use a different alias or transliteration. Fallback
+    // to a title-only phrase, then broad title tokens, only on deliberate search.
     if (explicitSearch && artist && !(data.releases || []).length) {
-      data = await musicBrainzFetch(env, '/release/', { query: lucenePrefix('release', q), limit: 12 });
+      data = await musicBrainzFetch(env, '/release/', { query: luceneReleaseQuery(q), limit: 45 });
+    }
+    if (explicitSearch && !(data.releases || []).length) {
+      data = await musicBrainzFetch(env, '/release/', { query: lucenePrefix('release', q), limit: 45 });
     }
     const result = (data.releases || []).map((r) => {
       const artistName = creditedArtist(r['artist-credit']);
@@ -35,10 +45,12 @@ export async function onRequestGet({ request, env }) {
         year: String(r.date || '').slice(0, 4), country, format, mediaFormat: guessMediaFormat(r.media || []),
         label: `${artistName || 'Nieznany wykonawca'} — ${r.title || ''} (${String(r.date || '').slice(0, 4) || 'bez roku'})`,
         score: (r.score || 0)
-          + (preferredYear && String(r.date || '').startsWith(preferredYear) ? 20 : 0)
-          + (preferredFormat && (r.media || []).some((m) => m.format) && guessMediaFormat(r.media || []).toLowerCase() === preferredFormat ? 10 : 0)
+          + (String(r.title || '').trim().toLocaleLowerCase() === q.toLocaleLowerCase() ? 40 : 0)
+          + (artist && artistName.toLocaleLowerCase().includes(artist.toLocaleLowerCase()) ? 25 : 0)
+          + (preferredYear && String(r.date || '').startsWith(preferredYear) ? 35 : 0)
+          + (preferredFormat && (r.media || []).some((m) => m.format) && guessMediaFormat(r.media || []).toLowerCase() === preferredFormat ? 15 : 0)
       };
     }).sort((a, b) => b.score - a.score);
-    return json({ ok: true, suggestions: result });
+    return json({ ok: true, suggestions: result.slice(0, explicitSearch ? 20 : 10) });
   } catch (error) { return musicBrainzError(error, json); }
 }

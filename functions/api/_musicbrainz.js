@@ -17,17 +17,31 @@ export function musicBrainzHeaders(env = {}) {
   };
 }
 
+// MusicBrainz uses Lucene syntax. Quoted phrases are essential for multi-word
+// titles (e.g. "Master of Puppets"); forcing AND on every word may yield zero
+// results because short words such as "of" can be omitted by the search index.
 export function lucenePhrase(input) {
-  const text = String(input || '').replace(/[\\"\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
+  const text = String(input || '')
+    .replace(/[\\"\r\n]/g, ' ')
+    .replace(/\s+/g, ' ').trim();
   return `"${text}"`;
 }
 
-// Wildcards are useful for autocomplete: "Metall" -> Metallica, "Mast" -> Master.
-// Keep all earlier words as separate field tokens; only the last one gets a prefix.
+// Used for autocomplete only. Ignore standalone stopwords rather than
+// requiring them as separate Lucene terms ("Master of Pup" -> Master AND Pup*).
+const STOP_WORDS = new Set(['a', 'an', 'and', 'at', 'by', 'for', 'from', 'in', 'of', 'on', 'or', 'the', 'to']);
 export function lucenePrefix(field, input) {
   const parts = String(input || '').replace(/[^\p{L}\p{N}\s-]/gu, ' ')
     .trim().split(/\s+/).filter(Boolean).slice(0, 8);
-  return parts.map((part, index) => `${field}:${part}${index === parts.length - 1 ? '*' : ''}`).join(' AND ');
+  const meaningful = parts.filter((part) => !STOP_WORDS.has(part.toLowerCase()));
+  const words = meaningful.length ? meaningful : parts;
+  return words.map((part, index) => `${field}:${part}${index === words.length - 1 ? '*' : ''}`).join(' AND ');
+}
+
+// Exact phrase (normal search), unlike the prefix search used for suggestions.
+export function luceneReleaseQuery(title, artist = '') {
+  const release = `release:${lucenePhrase(title)}`;
+  return artist ? `${release} AND artist:${lucenePhrase(artist)}` : release;
 }
 
 // Serialize requests in each warm Worker isolate. MusicBrainz limits by source IP,
